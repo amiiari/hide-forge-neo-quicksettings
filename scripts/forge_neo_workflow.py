@@ -24,8 +24,8 @@ def _patched_make_checkpoint_manager_ui():
         dtype_change,
     )
 
-    hidden = set(shared.opts.forge_neo_workflow_hidden_quicksettings or [])
-    print(f"[forge-neo-workflow] _patched_make_checkpoint_manager_ui called. Hidden: {hidden}", flush=True)
+    hidden = set(_get_hidden())
+    print(f"[hide-quicksettings] _patched_make_checkpoint_manager_ui called. Hidden: {hidden}", flush=True)
 
     if shared.opts.sd_model_checkpoint in [None, "None", "none", ""]:
         if len(sd_models.checkpoints_list) == 0:
@@ -86,12 +86,20 @@ def _patched_make_checkpoint_manager_ui():
     main_entry.ui_vae = ui_vae
     main_entry.ui_forge_unet_dtype = ui_forge_unet_dtype
 
+def _get_hidden():
+    """Read hidden items, falling back to old key if new one isn't registered yet."""
+    return (
+        getattr(shared.opts, 'hide_quicksettings_hidden_items', None)
+        or getattr(shared.opts, 'forge_neo_workflow_hidden_quicksettings', None)
+        or []
+    )
+
 def _apply_patch():
     from modules_forge import main_entry
     if not hasattr(main_entry, 'make_checkpoint_manager_ui'):
-        print("[forge-neo-workflow] make_checkpoint_manager_ui NOT found on main_entry!", flush=True)
+        print("[hide-quicksettings] make_checkpoint_manager_ui NOT found on main_entry!", flush=True)
         return
-    hidden = set(shared.opts.forge_neo_workflow_hidden_quicksettings or [])
+    hidden = set(_get_hidden())
     # Also remove Forge quicksettings keys from opts.quicksettings_list
     mapping_to_qs = {
         "Checkpoint":          "sd_model_checkpoint",
@@ -102,22 +110,22 @@ def _apply_patch():
             shared.opts.quicksettings_list.remove(qs_key)
 
     main_entry.make_checkpoint_manager_ui = _patched_make_checkpoint_manager_ui
-    print(f"[forge-neo-workflow] Patch applied. make_checkpoint_manager_ui replaced.", flush=True)
+    print(f"[hide-quicksettings] Patch applied. make_checkpoint_manager_ui replaced.", flush=True)
 
 # Apply the patch before UI is built (happens at import time via script loading)
-print("[forge-neo-workflow] Loading extension...", flush=True)
+print("[hide-quicksettings] Loading extension...", flush=True)
 _apply_patch()
-print(f"[forge-neo-workflow] Patch applied. Hidden: {shared.opts.forge_neo_workflow_hidden_quicksettings}", flush=True)
+print(f"[hide-quicksettings] Patch applied. Hidden: {shared.opts.hide_quicksettings_hidden_items}", flush=True)
 
 # Register settings under a new section in Forge Neo Settings
 shared.options_templates.update(
     shared.options_section(
-        ("forge_neo_workflow", "Forge Neo Workflow", "ui"),
+        ("hide_quicksettings", "Hide Quicksettings", "ui"),
         {
-            "forge_neo_workflow": shared.OptionHTML(
-                "Customize your Forge Neo workspace — hide quicksettings you don't use."
+            "hide_quicksettings": shared.OptionHTML(
+                "Hide quicksetting dropdowns from the top bar to simplify your workspace."
             ),
-            "forge_neo_workflow_hidden_quicksettings": shared.OptionInfo(
+            "hide_quicksettings_hidden_items": shared.OptionInfo(
                 [],
                 "Hidden Quicksettings",
                 gr.CheckboxGroup,
