@@ -150,13 +150,26 @@ _GEN_TARGETS = [
     ("txt2img_hr_upscaler", "{p}_default_hr_upscaler", "str"),
     ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float"),
     ("txt2img_hr_scale", "{p}_default_hr_scale", "float"),
-    ("script_txt2img_adetailer_ad_model", "{p}_default_ad_model_1", "str"),
-    ("script_txt2img_adetailer_ad_model_2nd", "{p}_default_ad_model_2", "str"),
-    ("script_txt2img_adetailer_ad_prompt", "{p}_default_ad_prompt_1", "str"),
-    ("script_txt2img_adetailer_ad_negative_prompt", "{p}_default_ad_neg_prompt_1", "str"),
-    ("script_txt2img_adetailer_ad_prompt_2nd", "{p}_default_ad_prompt_2", "str"),
-    ("script_txt2img_adetailer_ad_negative_prompt_2nd", "{p}_default_ad_neg_prompt_2", "str"),
 ]
+
+
+def _unit_elem_suffix(n):
+    """ADetailer's elem_id suffix for unit n (1-based): '', '_2nd', '_3rd', '_4th', ..."""
+    if n == 1:
+        return ""
+    d = {1: "st", 2: "nd", 3: "rd"}
+    return "_" + str(n) + ("th" if 11 <= n % 100 <= 13 else d.get(n % 10, "th"))
+
+
+# One slot per ADetailer unit (however many ad_max_models says exist)
+_AD_UNITS = int(shared.opts.data.get("ad_max_models", 2) or 2)
+for _u in range(1, _AD_UNITS + 1):
+    _suf = _unit_elem_suffix(_u)
+    _GEN_TARGETS += [
+        (f"script_txt2img_adetailer_ad_model{_suf}", f"{{p}}_default_ad_model_{_u}", "str"),
+        (f"script_txt2img_adetailer_ad_prompt{_suf}", f"{{p}}_default_ad_prompt_{_u}", "str"),
+        (f"script_txt2img_adetailer_ad_negative_prompt{_suf}", f"{{p}}_default_ad_neg_prompt_{_u}", "str"),
+    ]
 
 _captured = {}
 
@@ -249,45 +262,36 @@ shared.options_templates.update(
     ),
 )
 
-# Per-preset default prompts, registered on each preset's own settings page
+# Per-preset generation defaults, registered on each preset's own settings page.
+# ADetailer fields are generated for every unit slot (ad_max_models).
 for _name in _PresetArch.choices():
+    _fields = {
+        f"{_name}_default_prompt": shared.OptionInfo(
+            "", "Default prompt", gr.Textbox, {"lines": 6}
+        ).info("Filled into txt2img prompt when switching to this preset. Leave empty to keep the current prompt."),
+        f"{_name}_default_neg_prompt": shared.OptionInfo(
+            "", "Default negative prompt", gr.Textbox, {"lines": 3}
+        ).info("Filled into txt2img negative prompt when switching to this preset. Leave empty to keep the current one."),
+        f"{_name}_default_hr_upscaler": shared.OptionInfo(
+            "", "Default hires upscaler"
+        ).info("Hires-fix upscaler name for this preset (e.g. 4xUltrasharp_4xUltrasharpV10). Empty = leave alone."),
+        f"{_name}_default_hr_denoise": shared.OptionInfo(
+            "", "Default hires denoising strength"
+        ).info("e.g. 0.3 — empty = leave alone."),
+        f"{_name}_default_hr_scale": shared.OptionInfo(
+            "", "Default hires upscale by"
+        ).info("e.g. 1.25 — empty = leave alone."),
+    }
+    for _u in range(1, _AD_UNITS + 1):
+        _fields[f"{_name}_default_ad_model_{_u}"] = shared.OptionInfo(
+            "", f"Default ADetailer model (unit {_u})"
+        ).info("Exact model filename, e.g. face_yolov9c.pt. Empty = leave alone.")
+        _fields[f"{_name}_default_ad_prompt_{_u}"] = shared.OptionInfo(
+            "", f"Default ADetailer prompt (unit {_u})", gr.Textbox, {"lines": 2}
+        ).info("Empty = leave alone; the word EMPTY = clear the field (ADetailer then uses the main prompt).")
+        _fields[f"{_name}_default_ad_neg_prompt_{_u}"] = shared.OptionInfo(
+            "", f"Default ADetailer negative prompt (unit {_u})", gr.Textbox, {"lines": 2}
+        ).info("Empty = leave alone; EMPTY = clear.")
     shared.options_templates.update(
-        shared.options_section(
-            (f"ui_{_name}", _name.upper(), "presets"),
-            {
-                f"{_name}_default_prompt": shared.OptionInfo(
-                    "", "Default prompt", gr.Textbox, {"lines": 6}
-                ).info("Filled into txt2img prompt when switching to this preset. Leave empty to keep the current prompt."),
-                f"{_name}_default_neg_prompt": shared.OptionInfo(
-                    "", "Default negative prompt", gr.Textbox, {"lines": 3}
-                ).info("Filled into txt2img negative prompt when switching to this preset. Leave empty to keep the current one."),
-                f"{_name}_default_hr_upscaler": shared.OptionInfo(
-                    "", "Default hires upscaler"
-                ).info("Hires-fix upscaler name for this preset (e.g. 4xUltrasharp_4xUltrasharpV10). Empty = leave alone."),
-                f"{_name}_default_hr_denoise": shared.OptionInfo(
-                    "", "Default hires denoising strength"
-                ).info("e.g. 0.3 — empty = leave alone."),
-                f"{_name}_default_hr_scale": shared.OptionInfo(
-                    "", "Default hires upscale by"
-                ).info("e.g. 1.25 — empty = leave alone."),
-                f"{_name}_default_ad_model_1": shared.OptionInfo(
-                    "", "Default ADetailer model (unit 1)"
-                ).info("Exact model filename, e.g. face_yolov9c.pt. Empty = leave alone."),
-                f"{_name}_default_ad_model_2": shared.OptionInfo(
-                    "", "Default ADetailer model (unit 2)"
-                ).info("Exact model filename. Empty = leave alone."),
-                f"{_name}_default_ad_prompt_1": shared.OptionInfo(
-                    "", "Default ADetailer prompt (unit 1)", gr.Textbox, {"lines": 2}
-                ).info("Empty = leave alone; the word EMPTY = clear the field (ADetailer then uses the main prompt)."),
-                f"{_name}_default_ad_neg_prompt_1": shared.OptionInfo(
-                    "", "Default ADetailer negative prompt (unit 1)", gr.Textbox, {"lines": 2}
-                ).info("Empty = leave alone; EMPTY = clear."),
-                f"{_name}_default_ad_prompt_2": shared.OptionInfo(
-                    "", "Default ADetailer prompt (unit 2)", gr.Textbox, {"lines": 2}
-                ).info("Empty = leave alone; EMPTY = clear."),
-                f"{_name}_default_ad_neg_prompt_2": shared.OptionInfo(
-                    "", "Default ADetailer negative prompt (unit 2)", gr.Textbox, {"lines": 2}
-                ).info("Empty = leave alone; EMPTY = clear."),
-            },
-        ),
+        shared.options_section((f"ui_{_name}", _name.upper(), "presets"), _fields),
     )
