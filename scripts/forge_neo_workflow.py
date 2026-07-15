@@ -107,8 +107,8 @@ def _patched_make_checkpoint_manager_ui():
     main_entry.ui_vae = ui_vae
     main_entry.ui_forge_unet_dtype = ui_forge_unet_dtype
 
-    # Feature 3: preset switch also swaps the txt2img prompts
-    _wire_prompt_swap(ui_forge_preset)
+    # Feature 3+5: preset switch (and UI load) applies per-preset generation defaults
+    _wire_preset_swap(ui_forge_preset)
 
 def _get_hidden():
     """Read hidden items, falling back to old key if new one isn't registered yet."""
@@ -136,44 +136,70 @@ def _apply_patch():
     main_entry.make_checkpoint_manager_ui = _patched_make_checkpoint_manager_ui
     print(f"[hide-quicksettings] Patch applied. make_checkpoint_manager_ui replaced.", flush=True)
 
-# ---------------------------------------------------------------- Feature 3
-# Per-preset default prompts: switching the UI Preset dropdown also fills the
-# txt2img prompt / negative prompt with that preset's defaults (Settings ->
-# the preset's own page, e.g. SD / XL). Empty default = leave the box alone.
+# ---------------------------------------------------------------- Feature 3+5
+# Per-preset generation defaults: switching the UI Preset dropdown (and every
+# UI (re)load) fills the txt2img prompt / negative prompt, hires-fix upscaler /
+# denoising / upscale-by, and the ADetailer unit models with that preset's
+# defaults (Settings -> the preset's own page, e.g. SD / XL).
+# Empty default = leave that box alone.
 
-_prompt_components = {}
+# (elem_id to capture, per-preset option key template, value type)
+_GEN_TARGETS = [
+    ("txt2img_prompt", "{p}_default_prompt", "str"),
+    ("txt2img_neg_prompt", "{p}_default_neg_prompt", "str"),
+    ("txt2img_hr_upscaler", "{p}_default_hr_upscaler", "str"),
+    ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float"),
+    ("txt2img_hr_scale", "{p}_default_hr_scale", "float"),
+    ("script_txt2img_adetailer_ad_model", "{p}_default_ad_model_1", "str"),
+    ("script_txt2img_adetailer_ad_model_2nd", "{p}_default_ad_model_2", "str"),
+]
+
+_captured = {}
 
 
-def _swap_prompts(preset):
-    p = getattr(shared.opts, f"{preset}_default_prompt", "") or ""
-    n = getattr(shared.opts, f"{preset}_default_neg_prompt", "") or ""
-    return (
-        gr.update(value=p) if p.strip() else gr.skip(),
-        gr.update(value=n) if n.strip() else gr.skip(),
-    )
+def _preset_updates(preset, targets):
+    out = []
+    for _elem, key_tpl, typ in targets:
+        raw = getattr(shared.opts, key_tpl.format(p=preset), "")
+        raw = "" if raw is None else str(raw).strip()
+        if not raw:
+            out.append(gr.skip())
+        elif typ == "float":
+            try:
+                out.append(gr.update(value=float(raw)))
+            except ValueError:
+                out.append(gr.skip())
+        else:
+            out.append(gr.update(value=raw))
+    return out[0] if len(out) == 1 else out
 
 
-def _wire_prompt_swap(preset_dd):
+def _wire_preset_swap(preset_dd):
     """Called from inside the patched checkpoint-manager builder, so we are
-    guaranteed to be inside the live gr.Blocks context (the prompt boxes are
-    built before the top bar in Forge Neo)."""
-    if len(_prompt_components) != 2:
-        print("[hide-quicksettings] prompt boxes not captured - prompt swap not wired", flush=True)
+    guaranteed to be inside the live gr.Blocks context (the txt2img tab incl.
+    the ADetailer accordion is built before the top bar in Forge Neo)."""
+    from modules_forge.main_entry import Context
+
+    targets = [t for t in _GEN_TARGETS if t[0] in _captured]
+    if not targets:
+        print("[hide-quicksettings] no components captured - preset swap not wired", flush=True)
         return
-    preset_dd.change(
-        _swap_prompts,
-        inputs=[preset_dd],
-        outputs=[_prompt_components["txt2img_prompt"], _prompt_components["txt2img_neg_prompt"]],
-        queue=False,
-        show_progress=False,
-    )
-    print("[hide-quicksettings] Prompt swap wired.", flush=True)
+    outputs = [_captured[t[0]] for t in targets]
+
+    def _fn(preset):
+        return _preset_updates(preset, targets)
+
+    preset_dd.change(_fn, inputs=[preset_dd], outputs=outputs, queue=False, show_progress=False)
+    # Also apply on every UI load, so per-preset defaults (ADetailer models,
+    # hires settings, ...) come back after a restart regardless of ui-config.
+    Context.root_block.load(_fn, inputs=[preset_dd], outputs=outputs, queue=False, show_progress=False)
+    print(f"[hide-quicksettings] Preset swap wired for {len(targets)} fields.", flush=True)
 
 
 def _on_after_component(component, **kwargs):
     elem_id = kwargs.get("elem_id")
-    if elem_id in ("txt2img_prompt", "txt2img_neg_prompt"):
-        _prompt_components[elem_id] = component
+    if elem_id in {t[0] for t in _GEN_TARGETS}:
+        _captured[elem_id] = component
 
 
 script_callbacks.on_after_component(_on_after_component)
@@ -229,6 +255,21 @@ for _name in _PresetArch.choices():
                 f"{_name}_default_neg_prompt": shared.OptionInfo(
                     "", "Default negative prompt", gr.Textbox, {"lines": 3}
                 ).info("Filled into txt2img negative prompt when switching to this preset. Leave empty to keep the current one."),
+                f"{_name}_default_hr_upscaler": shared.OptionInfo(
+                    "", "Default hires upscaler"
+                ).info("Hires-fix upscaler name for this preset (e.g. 4xUltrasharp_4xUltrasharpV10). Empty = leave alone."),
+                f"{_name}_default_hr_denoise": shared.OptionInfo(
+                    "", "Default hires denoising strength"
+                ).info("e.g. 0.3 — empty = leave alone."),
+                f"{_name}_default_hr_scale": shared.OptionInfo(
+                    "", "Default hires upscale by"
+                ).info("e.g. 1.25 — empty = leave alone."),
+                f"{_name}_default_ad_model_1": shared.OptionInfo(
+                    "", "Default ADetailer model (unit 1)"
+                ).info("Exact model filename, e.g. face_yolov9c.pt. Empty = leave alone."),
+                f"{_name}_default_ad_model_2": shared.OptionInfo(
+                    "", "Default ADetailer model (unit 2)"
+                ).info("Exact model filename. Empty = leave alone."),
             },
         ),
     )
