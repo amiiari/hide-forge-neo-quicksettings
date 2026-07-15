@@ -147,9 +147,12 @@ def _apply_patch():
 _GEN_TARGETS = [
     ("txt2img_prompt", "{p}_default_prompt", "str"),
     ("txt2img_neg_prompt", "{p}_default_neg_prompt", "str"),
+    ("img2img_prompt", "{p}_default_prompt", "str"),
+    ("img2img_neg_prompt", "{p}_default_neg_prompt", "str"),
     ("txt2img_hr_upscaler", "{p}_default_hr_upscaler", "str"),
     ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float"),
     ("txt2img_hr_scale", "{p}_default_hr_scale", "float"),
+    ("img2img_denoising_strength", "{p}_default_i2i_denoise", "float"),
 ]
 
 
@@ -161,15 +164,18 @@ def _unit_elem_suffix(n):
     return "_" + str(n) + ("th" if 11 <= n % 100 <= 13 else d.get(n % 10, "th"))
 
 
-# One slot per ADetailer unit (however many ad_max_models says exist)
+# One slot per ADetailer unit (however many ad_max_models says exist), on BOTH
+# tabs — txt2img and img2img have separate ADetailer component instances, and
+# a preset switch should reconfigure the whole app like a separate install.
 _AD_UNITS = int(shared.opts.data.get("ad_max_models", 2) or 2)
 for _u in range(1, _AD_UNITS + 1):
     _suf = _unit_elem_suffix(_u)
-    _GEN_TARGETS += [
-        (f"script_txt2img_adetailer_ad_model{_suf}", f"{{p}}_default_ad_model_{_u}", "str"),
-        (f"script_txt2img_adetailer_ad_prompt{_suf}", f"{{p}}_default_ad_prompt_{_u}", "str"),
-        (f"script_txt2img_adetailer_ad_negative_prompt{_suf}", f"{{p}}_default_ad_neg_prompt_{_u}", "str"),
-    ]
+    for _tab in ("txt2img", "img2img"):
+        _GEN_TARGETS += [
+            (f"script_{_tab}_adetailer_ad_model{_suf}", f"{{p}}_default_ad_model_{_u}", "str"),
+            (f"script_{_tab}_adetailer_ad_prompt{_suf}", f"{{p}}_default_ad_prompt_{_u}", "str"),
+            (f"script_{_tab}_adetailer_ad_negative_prompt{_suf}", f"{{p}}_default_ad_neg_prompt_{_u}", "str"),
+        ]
 
 _captured = {}
 
@@ -281,6 +287,9 @@ for _name in _PresetArch.choices():
         f"{_name}_default_hr_scale": shared.OptionInfo(
             "", "Default hires upscale by"
         ).info("e.g. 1.25 — empty = leave alone."),
+        f"{_name}_default_i2i_denoise": shared.OptionInfo(
+            "", "Default img2img denoising strength"
+        ).info("e.g. 0.5 — empty = leave alone."),
     }
     for _u in range(1, _AD_UNITS + 1):
         _fields[f"{_name}_default_ad_model_{_u}"] = shared.OptionInfo(
