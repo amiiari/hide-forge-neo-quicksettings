@@ -152,6 +152,10 @@ _GEN_TARGETS = [
     ("txt2img_hr_scale", "{p}_default_hr_scale", "float"),
     ("script_txt2img_adetailer_ad_model", "{p}_default_ad_model_1", "str"),
     ("script_txt2img_adetailer_ad_model_2nd", "{p}_default_ad_model_2", "str"),
+    ("script_txt2img_adetailer_ad_prompt", "{p}_default_ad_prompt_1", "str"),
+    ("script_txt2img_adetailer_ad_negative_prompt", "{p}_default_ad_neg_prompt_1", "str"),
+    ("script_txt2img_adetailer_ad_prompt_2nd", "{p}_default_ad_prompt_2", "str"),
+    ("script_txt2img_adetailer_ad_negative_prompt_2nd", "{p}_default_ad_neg_prompt_2", "str"),
 ]
 
 _captured = {}
@@ -164,6 +168,8 @@ def _preset_updates(preset, targets):
         raw = "" if raw is None else str(raw).strip()
         if not raw:
             out.append(gr.skip())
+        elif raw == "EMPTY":  # sentinel: actually clear the field
+            out.append(gr.update(value=""))
         elif typ == "float":
             try:
                 out.append(gr.update(value=float(raw)))
@@ -270,6 +276,18 @@ for _name in _PresetArch.choices():
                 f"{_name}_default_ad_model_2": shared.OptionInfo(
                     "", "Default ADetailer model (unit 2)"
                 ).info("Exact model filename. Empty = leave alone."),
+                f"{_name}_default_ad_prompt_1": shared.OptionInfo(
+                    "", "Default ADetailer prompt (unit 1)", gr.Textbox, {"lines": 2}
+                ).info("Empty = leave alone; the word EMPTY = clear the field (ADetailer then uses the main prompt)."),
+                f"{_name}_default_ad_neg_prompt_1": shared.OptionInfo(
+                    "", "Default ADetailer negative prompt (unit 1)", gr.Textbox, {"lines": 2}
+                ).info("Empty = leave alone; EMPTY = clear."),
+                f"{_name}_default_ad_prompt_2": shared.OptionInfo(
+                    "", "Default ADetailer prompt (unit 2)", gr.Textbox, {"lines": 2}
+                ).info("Empty = leave alone; EMPTY = clear."),
+                f"{_name}_default_ad_neg_prompt_2": shared.OptionInfo(
+                    "", "Default ADetailer negative prompt (unit 2)", gr.Textbox, {"lines": 2}
+                ).info("Empty = leave alone; EMPTY = clear."),
             },
         ),
     )
