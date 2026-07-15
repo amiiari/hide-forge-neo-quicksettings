@@ -107,6 +107,9 @@ def _patched_make_checkpoint_manager_ui():
     main_entry.ui_vae = ui_vae
     main_entry.ui_forge_unet_dtype = ui_forge_unet_dtype
 
+    # Feature 3: preset switch also swaps the txt2img prompts
+    _wire_prompt_swap(ui_forge_preset)
+
 def _get_hidden():
     """Read hidden items, falling back to old key if new one isn't registered yet."""
     return (
@@ -150,12 +153,12 @@ def _swap_prompts(preset):
     )
 
 
-def _wire_prompt_swap():
-    from modules_forge import main_entry
-
-    preset_dd = getattr(main_entry, "ui_forge_preset", None)
-    if preset_dd is None:
-        print("[hide-quicksettings] ui_forge_preset not found - prompt swap not wired", flush=True)
+def _wire_prompt_swap(preset_dd):
+    """Called from inside the patched checkpoint-manager builder, so we are
+    guaranteed to be inside the live gr.Blocks context (the prompt boxes are
+    built before the top bar in Forge Neo)."""
+    if len(_prompt_components) != 2:
+        print("[hide-quicksettings] prompt boxes not captured - prompt swap not wired", flush=True)
         return
     preset_dd.change(
         _swap_prompts,
@@ -171,8 +174,6 @@ def _on_after_component(component, **kwargs):
     elem_id = kwargs.get("elem_id")
     if elem_id in ("txt2img_prompt", "txt2img_neg_prompt"):
         _prompt_components[elem_id] = component
-        if len(_prompt_components) == 2:
-            _wire_prompt_swap()
 
 
 script_callbacks.on_after_component(_on_after_component)
