@@ -1,5 +1,6 @@
 import gradio as gr
-from modules import shared
+from modules import script_callbacks, shared
+from modules_forge.presets import PresetArch as _PresetArch
 
 # Mapping of setting labels -> elem_id for Forge quicksetting dropdowns
 HIDABLE_QUICKSETTINGS = {
@@ -13,7 +14,9 @@ HIDABLE_QUICKSETTINGS = {
 def _preset_choices(PresetArch):
     """Preset choices with optional display labels ("sd:anima, xl:illustrious").
     Only the shown text changes; the underlying values stay sd/xl/... so all
-    per-preset config keys (forge_checkpoint_sd, xl_t2i_cfg, ...) keep working."""
+    per-preset config keys (forge_checkpoint_sd, xl_t2i_cfg, ...) keep working.
+    Presets ticked in "Hidden presets" are dropped from the dropdown, except
+    the currently active one (so the dropdown never loses its value)."""
     labels = {}
     raw = getattr(shared.opts, "hide_quicksettings_preset_labels", "") or ""
     for part in raw.split(","):
@@ -21,7 +24,10 @@ def _preset_choices(PresetArch):
             key, label = part.split(":", 1)
             if key.strip() and label.strip():
                 labels[key.strip()] = label.strip()
-    return [(labels.get(name, name), name) for name in PresetArch.choices()]
+    hidden = set(getattr(shared.opts, "hide_quicksettings_hidden_presets", None) or [])
+    current = getattr(shared.opts, "forge_preset", "sd")
+    return [(labels.get(name, name), name) for name in PresetArch.choices()
+            if name not in hidden or name == current]
 
 
 def _patched_make_checkpoint_manager_ui():
@@ -127,6 +133,50 @@ def _apply_patch():
     main_entry.make_checkpoint_manager_ui = _patched_make_checkpoint_manager_ui
     print(f"[hide-quicksettings] Patch applied. make_checkpoint_manager_ui replaced.", flush=True)
 
+# ---------------------------------------------------------------- Feature 3
+# Per-preset default prompts: switching the UI Preset dropdown also fills the
+# txt2img prompt / negative prompt with that preset's defaults (Settings ->
+# the preset's own page, e.g. SD / XL). Empty default = leave the box alone.
+
+_prompt_components = {}
+
+
+def _swap_prompts(preset):
+    p = getattr(shared.opts, f"{preset}_default_prompt", "") or ""
+    n = getattr(shared.opts, f"{preset}_default_neg_prompt", "") or ""
+    return (
+        gr.update(value=p) if p.strip() else gr.skip(),
+        gr.update(value=n) if n.strip() else gr.skip(),
+    )
+
+
+def _wire_prompt_swap():
+    from modules_forge import main_entry
+
+    preset_dd = getattr(main_entry, "ui_forge_preset", None)
+    if preset_dd is None:
+        print("[hide-quicksettings] ui_forge_preset not found - prompt swap not wired", flush=True)
+        return
+    preset_dd.change(
+        _swap_prompts,
+        inputs=[preset_dd],
+        outputs=[_prompt_components["txt2img_prompt"], _prompt_components["txt2img_neg_prompt"]],
+        queue=False,
+        show_progress=False,
+    )
+    print("[hide-quicksettings] Prompt swap wired.", flush=True)
+
+
+def _on_after_component(component, **kwargs):
+    elem_id = kwargs.get("elem_id")
+    if elem_id in ("txt2img_prompt", "txt2img_neg_prompt"):
+        _prompt_components[elem_id] = component
+        if len(_prompt_components) == 2:
+            _wire_prompt_swap()
+
+
+script_callbacks.on_after_component(_on_after_component)
+
 # Apply the patch before UI is built (happens at import time via script loading)
 print("[hide-quicksettings] Loading extension...", flush=True)
 _apply_patch()
@@ -154,6 +204,30 @@ shared.options_templates.update(
             )
             .info("Rename entries of the UI Preset dropdown, format: value:label, value:label (e.g. sd:anima, xl:illustrious). Display only — configs still use the real preset names. Requires UI reload.")
             .needs_reload_ui(),
+            "hide_quicksettings_hidden_presets": shared.OptionInfo(
+                [],
+                "Hidden presets",
+                gr.CheckboxGroup,
+                lambda: {"choices": _PresetArch.choices()},
+            )
+            .info("Remove presets you never use from the UI Preset dropdown. The currently active preset always stays visible. Requires UI reload.")
+            .needs_reload_ui(),
         },
     ),
 )
+
+# Per-preset default prompts, registered on each preset's own settings page
+for _name in _PresetArch.choices():
+    shared.options_templates.update(
+        shared.options_section(
+            (f"ui_{_name}", _name.upper(), "presets"),
+            {
+                f"{_name}_default_prompt": shared.OptionInfo(
+                    "", "Default prompt", gr.Textbox, {"lines": 6}
+                ).info("Filled into txt2img prompt when switching to this preset. Leave empty to keep the current prompt."),
+                f"{_name}_default_neg_prompt": shared.OptionInfo(
+                    "", "Default negative prompt", gr.Textbox, {"lines": 3}
+                ).info("Filled into txt2img negative prompt when switching to this preset. Leave empty to keep the current one."),
+            },
+        ),
+    )
