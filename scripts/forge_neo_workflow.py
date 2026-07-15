@@ -260,6 +260,22 @@ def _wire_preset_swap(preset_dd):
     Context.root_block.load(_on_apply, inputs=[preset_dd], outputs=comps, queue=False, show_progress=False)
     print(f"[hide-quicksettings] Preset swap wired for {len(targets)} fields.", flush=True)
 
+    # Batch ADetailer exposes a refresh hook: re-clone its slots on preset
+    # switch too (it builds before the top bar, so the hook exists by now).
+    # Wired AFTER the main handler so the ADetailer widgets are already synced
+    # to the new preset when the batch slots re-read them.
+    hook = getattr(shared, "batch_adetailer_refresh", None)
+    if hook:
+        _batch_fn, _batch_comps = hook
+        preset_dd.change(
+            lambda preset: _batch_fn(preset),
+            inputs=[preset_dd],
+            outputs=_batch_comps,
+            queue=False,
+            show_progress=False,
+        )
+        print("[hide-quicksettings] Batch ADetailer slots follow preset switches.", flush=True)
+
 
 def _on_after_component(component, **kwargs):
     elem_id = kwargs.get("elem_id")
