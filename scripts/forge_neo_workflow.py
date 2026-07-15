@@ -143,16 +143,19 @@ def _apply_patch():
 # defaults (Settings -> the preset's own page, e.g. SD / XL).
 # Empty default = leave that box alone.
 
-# (elem_id to capture, per-preset option key template, value type)
+# (elem_id to capture, per-preset option key template, value type, auto-snapshot)
+# snap=True fields behave like a separate installation: switching away from a
+# preset saves your current values into that preset, switching back restores
+# them. Prompts (snap=False) stay template-driven from Settings only.
 _GEN_TARGETS = [
-    ("txt2img_prompt", "{p}_default_prompt", "str"),
-    ("txt2img_neg_prompt", "{p}_default_neg_prompt", "str"),
-    ("img2img_prompt", "{p}_default_prompt", "str"),
-    ("img2img_neg_prompt", "{p}_default_neg_prompt", "str"),
-    ("txt2img_hr_upscaler", "{p}_default_hr_upscaler", "str"),
-    ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float"),
-    ("txt2img_hr_scale", "{p}_default_hr_scale", "float"),
-    ("img2img_denoising_strength", "{p}_default_i2i_denoise", "float"),
+    ("txt2img_prompt", "{p}_default_prompt", "str", False),
+    ("txt2img_neg_prompt", "{p}_default_neg_prompt", "str", False),
+    ("img2img_prompt", "{p}_default_prompt", "str", False),
+    ("img2img_neg_prompt", "{p}_default_neg_prompt", "str", False),
+    ("txt2img_hr_upscaler", "{p}_default_hr_upscaler", "str", True),
+    ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float", True),
+    ("txt2img_hr_scale", "{p}_default_hr_scale", "float", True),
+    ("img2img_denoising_strength", "{p}_default_i2i_denoise", "float", True),
 ]
 
 
@@ -172,31 +175,64 @@ for _u in range(1, _AD_UNITS + 1):
     _suf = _unit_elem_suffix(_u)
     for _tab in ("txt2img", "img2img"):
         _GEN_TARGETS += [
-            (f"script_{_tab}_adetailer_ad_model{_suf}", f"{{p}}_default_ad_model_{_u}", "str"),
-            (f"script_{_tab}_adetailer_ad_prompt{_suf}", f"{{p}}_default_ad_prompt_{_u}", "str"),
-            (f"script_{_tab}_adetailer_ad_negative_prompt{_suf}", f"{{p}}_default_ad_neg_prompt_{_u}", "str"),
+            (f"script_{_tab}_adetailer_ad_model{_suf}", f"{{p}}_default_ad_model_{_u}", "str", True),
+            (f"script_{_tab}_adetailer_ad_prompt{_suf}", f"{{p}}_default_ad_prompt_{_u}", "str", True),
+            (f"script_{_tab}_adetailer_ad_negative_prompt{_suf}", f"{{p}}_default_ad_neg_prompt_{_u}", "str", True),
         ]
 
 _captured = {}
 
 
-def _preset_updates(preset, targets):
+_last_preset = None
+
+
+def _apply_preset(preset, targets):
     out = []
-    for _elem, key_tpl, typ in targets:
+    for elem, key_tpl, typ, _snap in targets:
         raw = getattr(shared.opts, key_tpl.format(p=preset), "")
         raw = "" if raw is None else str(raw).strip()
         if not raw:
             out.append(gr.skip())
-        elif raw == "EMPTY":  # sentinel: actually clear the field
-            out.append(gr.update(value=""))
+            continue
+        if raw == "EMPTY":  # sentinel: actually clear the field
+            value = ""
         elif typ == "float":
             try:
-                out.append(gr.update(value=float(raw)))
+                value = float(raw)
             except ValueError:
                 out.append(gr.skip())
+                continue
         else:
-            out.append(gr.update(value=raw))
+            value = raw
+        # Keep the server-side component value in sync too: extensions that
+        # read widget .value directly (e.g. Batch ADetailer's unit-defaults
+        # snapshot) then see the active preset's values, not stale ones.
+        try:
+            _captured[elem].value = value
+        except Exception:
+            pass
+        out.append(gr.update(value=value))
     return out[0] if len(out) == 1 else out
+
+
+def _snapshot_preset(preset, targets, values):
+    """Save the current UI values into the given preset's settings (only for
+    snap=True fields) — switching away from a preset remembers what you had,
+    like closing one installation and opening another."""
+    changed = False
+    for (_elem, key_tpl, typ, snap), val in zip(targets, values):
+        if not snap or val is None:
+            continue
+        if typ == "float":
+            raw = str(val)
+        else:
+            raw = str(val).strip() or "EMPTY"
+        key = key_tpl.format(p=preset)
+        if str(getattr(shared.opts, key, "")) != raw:
+            shared.opts.set(key, raw)
+            changed = True
+    if changed:
+        shared.opts.save(shared.config_filename)
 
 
 def _wire_preset_swap(preset_dd):
@@ -209,16 +245,25 @@ def _wire_preset_swap(preset_dd):
     if not targets:
         print("[hide-quicksettings] no components captured - preset swap not wired", flush=True)
         return
-    outputs = [_captured[t[0]] for t in targets]
+    comps = [_captured[t[0]] for t in targets]
 
-    def _fn(preset):
-        return _preset_updates(preset, targets)
+    def _on_change(preset, *values):
+        global _last_preset
+        if _last_preset and _last_preset != preset:
+            _snapshot_preset(_last_preset, targets, values)
+        _last_preset = preset
+        return _apply_preset(preset, targets)
 
-    preset_dd.change(_fn, inputs=[preset_dd], outputs=outputs, queue=False, show_progress=False)
+    def _on_load(preset, *values):
+        global _last_preset
+        _last_preset = preset
+        return _apply_preset(preset, targets)
+
+    preset_dd.change(_on_change, inputs=[preset_dd, *comps], outputs=comps, queue=False, show_progress=False)
     # Also apply on every UI load, so per-preset defaults (ADetailer models,
     # hires settings, ...) come back after a restart regardless of ui-config.
-    Context.root_block.load(_fn, inputs=[preset_dd], outputs=outputs, queue=False, show_progress=False)
-    print(f"[hide-quicksettings] Preset swap wired for {len(targets)} fields.", flush=True)
+    Context.root_block.load(_on_load, inputs=[preset_dd, *comps], outputs=comps, queue=False, show_progress=False)
+    print(f"[hide-quicksettings] Preset swap wired for {len(targets)} fields (auto-remember on switch).", flush=True)
 
 
 def _on_after_component(component, **kwargs):
