@@ -10,6 +10,20 @@ HIDABLE_QUICKSETTINGS = {
     "Refresh Button":         "forge_refresh_checkpoint",
 }
 
+def _preset_choices(PresetArch):
+    """Preset choices with optional display labels ("sd:anima, xl:illustrious").
+    Only the shown text changes; the underlying values stay sd/xl/... so all
+    per-preset config keys (forge_checkpoint_sd, xl_t2i_cfg, ...) keep working."""
+    labels = {}
+    raw = getattr(shared.opts, "hide_quicksettings_preset_labels", "") or ""
+    for part in raw.split(","):
+        if ":" in part:
+            key, label = part.split(":", 1)
+            if key.strip() and label.strip():
+                labels[key.strip()] = label.strip()
+    return [(labels.get(name, name), name) for name in PresetArch.choices()]
+
+
 def _patched_make_checkpoint_manager_ui():
     from modules_forge import main_entry
     from modules import ui_common
@@ -33,13 +47,14 @@ def _patched_make_checkpoint_manager_ui():
         if len(sd_models.checkpoints_list) > 0:
             shared.opts.set("sd_model_checkpoint", next(iter(sd_models.checkpoints_list.values())).name)
 
+    preset_choices = _preset_choices(PresetArch)
     ui_forge_preset = None
     if "UI Preset" not in hidden:
-        ui_forge_preset = gr.Dropdown(label="UI Preset", value=lambda: shared.opts.forge_preset, choices=PresetArch.choices(), elem_id="forge_ui_preset")
+        ui_forge_preset = gr.Dropdown(label="UI Preset", value=lambda: shared.opts.forge_preset, choices=preset_choices, elem_id="forge_ui_preset")
     else:
         # Create invisible component so downstream code doesn't break
         with gr.Group(visible=False):
-            ui_forge_preset = gr.Dropdown(label="UI Preset", value=lambda: shared.opts.forge_preset, choices=PresetArch.choices(), elem_id="forge_ui_preset")
+            ui_forge_preset = gr.Dropdown(label="UI Preset", value=lambda: shared.opts.forge_preset, choices=preset_choices, elem_id="forge_ui_preset")
 
     ui_checkpoint = None
     if "Checkpoint" not in hidden:
@@ -115,7 +130,7 @@ def _apply_patch():
 # Apply the patch before UI is built (happens at import time via script loading)
 print("[hide-quicksettings] Loading extension...", flush=True)
 _apply_patch()
-print(f"[hide-quicksettings] Patch applied. Hidden: {shared.opts.hide_quicksettings_hidden_items}", flush=True)
+print(f"[hide-quicksettings] Patch applied. Hidden: {_get_hidden()}", flush=True)
 
 # Register settings under a new section in Forge Neo Settings
 shared.options_templates.update(
@@ -132,6 +147,12 @@ shared.options_templates.update(
                 lambda: {"choices": ["UI Preset", "Checkpoint", "VAE / Text Encoder", "Diffusion in Low Bits", "Refresh Button"]},
             )
             .info("Select which quicksetting elements to hide from the top bar. Requires UI reload.")
+            .needs_reload_ui(),
+            "hide_quicksettings_preset_labels": shared.OptionInfo(
+                "sd:anima, xl:illustrious",
+                "Preset display labels",
+            )
+            .info("Rename entries of the UI Preset dropdown, format: value:label, value:label (e.g. sd:anima, xl:illustrious). Display only — configs still use the real preset names. Requires UI reload.")
             .needs_reload_ui(),
         },
     ),

@@ -5,6 +5,7 @@ A lightweight extension for Stable Diffusion WebUI Forge - Neo that lets you hid
 ## Features
 
 - **Hide Quicksettings** — Remove unused quicksetting dropdowns (Checkpoint, VAE / Text Encoder, UI Preset, etc.) from the top bar so your interface stays clean.
+- **Preset display labels** — Rename entries of the UI Preset dropdown (e.g. show `sd` as `anima` and `xl` as `illustrious`). Display only: the underlying preset values are unchanged, so all per-preset settings keep working. Configure in **Settings → Hide Quicksettings**, format `value:label, value:label`.
 
 ## Installation
 
