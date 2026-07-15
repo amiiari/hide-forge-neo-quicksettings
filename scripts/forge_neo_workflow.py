@@ -1,5 +1,5 @@
 import gradio as gr
-from modules import script_callbacks, shared
+from modules import script_callbacks, shared, ui_loadsave
 from modules_forge.presets import PresetArch as _PresetArch
 
 # Mapping of setting labels -> elem_id for Forge quicksetting dropdowns
@@ -183,9 +183,6 @@ for _u in range(1, _AD_UNITS + 1):
 _captured = {}
 
 
-_last_preset = None
-
-
 def _apply_preset(preset, targets):
     out = []
     for elem, key_tpl, typ, _snap in targets:
@@ -216,11 +213,12 @@ def _apply_preset(preset, targets):
 
 
 def _snapshot_preset(preset, targets, values):
-    """Save the current UI values into the given preset's settings (only for
-    snap=True fields) — switching away from a preset remembers what you had,
-    like closing one installation and opening another."""
+    """Save the given UI values into the given preset's settings (only for
+    snap=True fields). Returns how many fields were saved. Also syncs the
+    server-side component .value so e.g. Batch ADetailer sees them at once."""
+    saved = 0
     changed = False
-    for (_elem, key_tpl, typ, snap), val in zip(targets, values):
+    for (elem, key_tpl, typ, snap), val in zip(targets, values):
         if not snap or val is None:
             continue
         if typ == "float":
@@ -228,11 +226,17 @@ def _snapshot_preset(preset, targets, values):
         else:
             raw = str(val).strip() or "EMPTY"
         key = key_tpl.format(p=preset)
+        saved += 1
+        try:
+            _captured[elem].value = val
+        except Exception:
+            pass
         if str(getattr(shared.opts, key, "")) != raw:
             shared.opts.set(key, raw)
             changed = True
     if changed:
         shared.opts.save(shared.config_filename)
+    return saved
 
 
 def _wire_preset_swap(preset_dd):
@@ -247,23 +251,14 @@ def _wire_preset_swap(preset_dd):
         return
     comps = [_captured[t[0]] for t in targets]
 
-    def _on_change(preset, *values):
-        global _last_preset
-        if _last_preset and _last_preset != preset:
-            _snapshot_preset(_last_preset, targets, values)
-        _last_preset = preset
+    def _on_apply(preset):
         return _apply_preset(preset, targets)
 
-    def _on_load(preset, *values):
-        global _last_preset
-        _last_preset = preset
-        return _apply_preset(preset, targets)
-
-    preset_dd.change(_on_change, inputs=[preset_dd, *comps], outputs=comps, queue=False, show_progress=False)
+    preset_dd.change(_on_apply, inputs=[preset_dd], outputs=comps, queue=False, show_progress=False)
     # Also apply on every UI load, so per-preset defaults (ADetailer models,
     # hires settings, ...) come back after a restart regardless of ui-config.
-    Context.root_block.load(_on_load, inputs=[preset_dd, *comps], outputs=comps, queue=False, show_progress=False)
-    print(f"[hide-quicksettings] Preset swap wired for {len(targets)} fields (auto-remember on switch).", flush=True)
+    Context.root_block.load(_on_apply, inputs=[preset_dd], outputs=comps, queue=False, show_progress=False)
+    print(f"[hide-quicksettings] Preset swap wired for {len(targets)} fields.", flush=True)
 
 
 def _on_after_component(component, **kwargs):
@@ -273,6 +268,51 @@ def _on_after_component(component, **kwargs):
 
 
 script_callbacks.on_after_component(_on_after_component)
+
+
+# ---------------------------------------------------------------- Feature 6
+# Settings -> Defaults -> Apply also saves the current ADetailer + hires /
+# img2img values into the ACTIVE preset's defaults. Explicit save on click —
+# per-image tweaking between clicks never touches the presets.
+
+def _save_preset_defaults(loadsave, values):
+    preset = getattr(shared.opts, "forge_preset", None)
+    if not preset:
+        return 0
+
+    value_by_comp = {}
+    for (_path, comp), val in zip(loadsave.component_mapping.items(), values):
+        choices = ui_loadsave.radio_choices(comp)
+        if isinstance(val, int) and choices and val < len(choices):
+            val = choices[val]
+            if isinstance(val, tuple):
+                val = val[0]
+        value_by_comp[id(comp)] = val
+
+    targets, aligned = [], []
+    for t in _GEN_TARGETS:
+        comp = _captured.get(t[0])
+        if comp is not None and id(comp) in value_by_comp:
+            targets.append(t)
+            aligned.append(value_by_comp[id(comp)])
+    return _snapshot_preset(preset, targets, aligned)
+
+
+_original_ui_apply = ui_loadsave.UiLoadsave.ui_apply
+
+
+def _patched_ui_apply(self, *values):
+    result = _original_ui_apply(self, *values)
+    try:
+        n = _save_preset_defaults(self, values)
+        if n:
+            result = f"{result} Also saved {n} value(s) as '{getattr(shared.opts, 'forge_preset', '?')}' preset defaults."
+    except Exception as e:
+        print(f"[hide-quicksettings] preset defaults save failed: {e}", flush=True)
+    return result
+
+
+ui_loadsave.UiLoadsave.ui_apply = _patched_ui_apply
 
 # Apply the patch before UI is built (happens at import time via script loading)
 print("[hide-quicksettings] Loading extension...", flush=True)
