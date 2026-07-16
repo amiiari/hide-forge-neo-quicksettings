@@ -242,11 +242,15 @@ def _snapshot_preset(preset, targets, values):
                 _captured[elem].value = val
             except Exception:
                 pass
-        if str(getattr(shared.opts, key, "")) != raw:
+        old = str(getattr(shared.opts, key, ""))
+        if old != raw:
+            print(f"[hide-quicksettings] defaults-save: {key}: {old!r} -> {raw!r}", flush=True)
             shared.opts.set(key, raw)
             changed = True
     if changed:
         shared.opts.save(shared.config_filename)
+    else:
+        print("[hide-quicksettings] defaults-save: nothing differed from stored presets", flush=True)
     return saved
 
 
@@ -305,23 +309,34 @@ script_callbacks.on_after_component(_on_after_component)
 def _save_preset_defaults(loadsave, values):
     preset = getattr(shared.opts, "forge_preset", None)
     if not preset:
+        print("[hide-quicksettings] defaults-save: no forge_preset", flush=True)
         return 0
 
-    value_by_comp = {}
+    # Match by elem_id, not object identity: gradio can hand UiLoadsave
+    # different wrapper objects than the after_component callback sees.
+    value_by_elemid = {}
     for (_path, comp), val in zip(loadsave.component_mapping.items(), values):
         choices = ui_loadsave.radio_choices(comp)
         if isinstance(val, int) and choices and val < len(choices):
             val = choices[val]
             if isinstance(val, tuple):
                 val = val[0]
-        value_by_comp[id(comp)] = val
+        eid = getattr(comp, "elem_id", None)
+        if eid:
+            value_by_elemid[eid] = val
 
-    targets, aligned = [], []
+    targets, aligned, missing = [], [], []
     for t in _GEN_TARGETS:
-        comp = _captured.get(t[0])
-        if comp is not None and id(comp) in value_by_comp:
+        if t[0] in value_by_elemid:
             targets.append(t)
-            aligned.append(value_by_comp[id(comp)])
+            aligned.append(value_by_elemid[t[0]])
+        else:
+            missing.append(t[0])
+    print(
+        f"[hide-quicksettings] defaults-save: preset={preset} matched={len(targets)}/{len(_GEN_TARGETS)}"
+        + (f" missing={missing}" if missing else ""),
+        flush=True,
+    )
     return _snapshot_preset(preset, targets, aligned)
 
 
