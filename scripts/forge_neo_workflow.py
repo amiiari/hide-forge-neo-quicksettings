@@ -215,9 +215,13 @@ def _apply_preset(preset, targets):
 def _snapshot_preset(preset, targets, values):
     """Save the given UI values into the given preset's settings (only for
     snap=True fields). Returns how many fields were saved. Also syncs the
-    server-side component .value so e.g. Batch ADetailer sees them at once."""
-    saved = 0
-    changed = False
+    server-side component .value so e.g. Batch ADetailer sees them at once.
+
+    The txt2img and img2img instances of a widget share one setting key; the
+    value that differs from the stored default wins, so changing either tab
+    saves (otherwise the untouched tab's stale value silently overwrites)."""
+    winner_by_key = {}
+    elems_by_key = {}
     for (elem, key_tpl, typ, snap), val in zip(targets, values):
         if not snap or val is None:
             continue
@@ -226,11 +230,18 @@ def _snapshot_preset(preset, targets, values):
         else:
             raw = str(val).strip() or "EMPTY"
         key = key_tpl.format(p=preset)
+        elems_by_key.setdefault(key, []).append(elem)
+        if key not in winner_by_key or raw != str(getattr(shared.opts, key, "")):
+            winner_by_key[key] = (raw, val)
+    saved = 0
+    changed = False
+    for key, (raw, val) in winner_by_key.items():
         saved += 1
-        try:
-            _captured[elem].value = val
-        except Exception:
-            pass
+        for elem in elems_by_key[key]:
+            try:
+                _captured[elem].value = val
+            except Exception:
+                pass
         if str(getattr(shared.opts, key, "")) != raw:
             shared.opts.set(key, raw)
             changed = True
