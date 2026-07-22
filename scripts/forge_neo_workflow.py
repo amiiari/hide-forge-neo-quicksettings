@@ -157,15 +157,11 @@ _GEN_TARGETS = [
     ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float", True),
     ("txt2img_hr_scale", "{p}_default_hr_scale", "float", True),
     ("img2img_denoising_strength", "{p}_default_i2i_denoise", "float", True),
-    # Sampler + schedule follow the preset too: a Karras schedule left over
-    # from the XL preset silently no-ops img2img/ADetailer passes on flow
-    # models (Anima), so these must never leak across a switch. Keys are
-    # PER TAB — anima generates with ER SDE/Beta but inpaints with
-    # DPM++ 2M/Simple, so the tabs can't share one value.
-    ("txt2img_sampling", "{p}_default_sampler", "str", True),
-    ("txt2img_scheduler", "{p}_default_scheduler", "str", True),
-    ("img2img_sampling", "{p}_default_i2i_sampler", "str", True),
-    ("img2img_scheduler", "{p}_default_i2i_scheduler", "str", True),
+    # Sampler/scheduler are deliberately NOT here: Forge Neo already switches
+    # them per preset natively ({preset}_t2i_sampler / _t2i_scheduler /
+    # _i2i_sampler / _i2i_scheduler, applied by main_entry.on_preset_change) —
+    # and its handler runs after ours, so a duplicate here loses the race
+    # anyway. Configure those on each preset's own Settings page.
 ]
 
 
@@ -427,20 +423,6 @@ for _name in _PresetArch.choices():
         f"{_name}_default_i2i_denoise": shared.OptionInfo(
             "", "Default img2img denoising strength"
         ).info("e.g. 0.5 — empty = leave alone."),
-        # Seeded for the two presets in use: a Karras schedule leaking from the
-        # XL preset into Anima (flow model) makes img2img/ADetailer a no-op.
-        f"{_name}_default_sampler": shared.OptionInfo(
-            {"sd": "ER SDE", "xl": "Euler a"}.get(_name, ""), "Default txt2img sampling method"
-        ).info("Exact sampler name (e.g. ER SDE, Euler a). Empty = leave alone."),
-        f"{_name}_default_scheduler": shared.OptionInfo(
-            {"sd": "Beta", "xl": "Automatic"}.get(_name, ""), "Default txt2img schedule type"
-        ).info("Exact schedule name (e.g. Beta, Automatic, Simple). Empty = leave alone."),
-        f"{_name}_default_i2i_sampler": shared.OptionInfo(
-            {"sd": "DPM++ 2M", "xl": "Euler a"}.get(_name, ""), "Default img2img sampling method"
-        ).info("Empty = leave alone."),
-        f"{_name}_default_i2i_scheduler": shared.OptionInfo(
-            {"sd": "Simple", "xl": "Automatic"}.get(_name, ""), "Default img2img schedule type"
-        ).info("Empty = leave alone."),
     }
     for _u in range(1, _AD_UNITS + 1):
         _fields[f"{_name}_default_ad_model_{_u}"] = shared.OptionInfo(
