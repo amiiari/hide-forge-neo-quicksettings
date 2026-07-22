@@ -143,19 +143,27 @@ def _apply_patch():
 # defaults (Settings -> the preset's own page, e.g. SD / XL).
 # Empty default = leave that box alone.
 
-# (elem_id to capture, per-preset option key template, value type, auto-snapshot)
-# snap=True fields behave like a separate installation: switching away from a
-# preset saves your current values into that preset, switching back restores
-# them. Prompts (snap=False) stay template-driven from Settings only.
+# (elem_id to capture, per-preset option key template, value type, snapshot)
+# snap=True fields are saved into the ACTIVE preset's defaults by
+# Settings -> Defaults -> Apply (Feature 6). Prompts included — snap=False on
+# them meant Defaults-Apply silently skipped the prompt boxes and the next UI
+# load restored the old stored defaults over whatever the user had typed.
 _GEN_TARGETS = [
-    ("txt2img_prompt", "{p}_default_prompt", "str", False),
-    ("txt2img_neg_prompt", "{p}_default_neg_prompt", "str", False),
-    ("img2img_prompt", "{p}_default_prompt", "str", False),
-    ("img2img_neg_prompt", "{p}_default_neg_prompt", "str", False),
+    ("txt2img_prompt", "{p}_default_prompt", "str", True),
+    ("txt2img_neg_prompt", "{p}_default_neg_prompt", "str", True),
+    ("img2img_prompt", "{p}_default_prompt", "str", True),
+    ("img2img_neg_prompt", "{p}_default_neg_prompt", "str", True),
     ("txt2img_hr_upscaler", "{p}_default_hr_upscaler", "str", True),
     ("txt2img_denoising_strength", "{p}_default_hr_denoise", "float", True),
     ("txt2img_hr_scale", "{p}_default_hr_scale", "float", True),
     ("img2img_denoising_strength", "{p}_default_i2i_denoise", "float", True),
+    # Sampler + schedule follow the preset too: a Karras schedule left over
+    # from the XL preset silently no-ops img2img/ADetailer passes on flow
+    # models (Anima), so these must never leak across a switch.
+    ("txt2img_sampling", "{p}_default_sampler", "str", True),
+    ("txt2img_scheduler", "{p}_default_scheduler", "str", True),
+    ("img2img_sampling", "{p}_default_sampler", "str", True),
+    ("img2img_scheduler", "{p}_default_scheduler", "str", True),
 ]
 
 
@@ -417,6 +425,14 @@ for _name in _PresetArch.choices():
         f"{_name}_default_i2i_denoise": shared.OptionInfo(
             "", "Default img2img denoising strength"
         ).info("e.g. 0.5 — empty = leave alone."),
+        # Seeded for the two presets in use: a Karras schedule leaking from the
+        # XL preset into Anima (flow model) makes img2img/ADetailer a no-op.
+        f"{_name}_default_sampler": shared.OptionInfo(
+            {"sd": "ER SDE", "xl": "DPM++ 2M"}.get(_name, ""), "Default sampling method"
+        ).info("Exact sampler name for txt2img AND img2img (e.g. ER SDE, DPM++ 2M). Empty = leave alone."),
+        f"{_name}_default_scheduler": shared.OptionInfo(
+            {"sd": "Beta", "xl": "Karras"}.get(_name, ""), "Default schedule type"
+        ).info("Exact schedule name for txt2img AND img2img (e.g. Beta, Simple, Karras). Empty = leave alone."),
     }
     for _u in range(1, _AD_UNITS + 1):
         _fields[f"{_name}_default_ad_model_{_u}"] = shared.OptionInfo(
